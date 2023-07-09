@@ -15,6 +15,8 @@
 \def\mpPre{}
 \def\mpPost{}
 
+\def\pointlabel#1{\textsf{#1}}
+
 \newif\ifCreateNewInstanceForPicture
 \CreateNewInstanceForPicturetrue
 
@@ -32,8 +34,6 @@
 	\else%
 		\global\def\sfB{defaultScaleFactor}%
 	\fi%
-	\undefineList%
-	\def\undefineList{}%
 	\ifCreateNewInstanceForPicture%
 		\global\advance \mpInst by 1%
 		\global\def\currentInstance{\the\mpInst}%
@@ -53,8 +53,7 @@
 		generateLineSynonyms;
 		stopMainPictureMode;
 		\mpPost
-	\stopreusableMPgraphic\ignorespaces\setbox0\vbox{\reuseMPgraphic{\currentInstance::currentPicture}}\global\addToUndefineList{#2}
-}
+	\stopreusableMPgraphic\ignorespaces\setbox0\vbox{\reuseMPgraphic{\currentInstance::currentPicture}}}
 	
 \def\defineNewPictureBasedOnOld{\dodoubleempty\definenewpicturebasedonold}
 \def\definenewpicturebasedonold[#1][#2]#3{%
@@ -70,19 +69,6 @@
 	\fi%
 	\CreateNewInstanceForPicturetrue
 	}
-
-% Every time some simple picture is drawn, new macro is defined
-% with \markPictAsReady. If macro is defined, predefined picture is used.
-% Every time new picture is added, instructions to undefine it are added with
-% \addToUndefineList. \undefineList is thus generated command, that, once executed,
-% undefines everything that was appended to it with \addToUndefineList.
-
-\def\unmarkPictAsReady#1{\expandafter\let\csname #1\endcsname\undefined}
-
-\def\addToUndefineList#1{\expandafter\def\expandafter\undefineList\expandafter{\undefineList \unmarkPictAsReady{#1}}}
-
-\def\undefineList{}
-\addToUndefineList{lastPicture}
 
 % When larger picture is defined, we can visualize its parts with \drawFromCurrentPicture
 % First (optional) argument is for picture's vertical alignment relative to the string
@@ -102,11 +88,10 @@
 		\global\def\dfcpl{middle}%
 	\fi%
 	\ifsecondargument%
-		\expandafter\ifx\csname #2\endcsname\relax%
-			\defineFromCurrentPicture{\dfcpl}{#2}{#3}%
-			\global\addToUndefineList{#2}%
-		\else%
+		\expandafter\ifx\csname instanceNameFor#2\endcsname\currentInstance%
 			\global\def\lastPict{#2}%
+		\else%
+			\defineFromCurrentPicture{\dfcpl}{#2}{#3}%
 		\fi%
 	\else%
 		\defineFromCurrentPicture{\dfcpl}{lastPicture}{#3}%
@@ -121,7 +106,8 @@
 			stopOffspringPictureMode;
 		\stopreusableMPgraphic%
 \global\def\lastPict{#2}%
-\global\expandafter\edef\csname\lastPict\endcsname{{\noexpand\drawDefinedPicture{\expandafter\lastPict}{\expandafter#1}}}}
+\global\expandafter\edef\csname\lastPict\endcsname{{\noexpand\drawDefinedPicture{\expandafter\lastPict}{\expandafter#1}}}
+\global\expandafter\edef\csname instanceNameFor\lastPict\endcsname{{\currentInstance}}}
 
 % \drawDefinedPicture draws defined and named picture, aligned as needed and,
 % possibly, with margins modified with \offsetPicture (i. e., if we want picture to act as if it's less tall that it actually is,
@@ -283,12 +269,12 @@
 		\drawFromCurrentPicture[\plal][arc#3]{
 		startAutoLabeling;
 		startTempScale(#2);
-		draw byNamedArc(#3);
+		draw byNamedArcSeq(0)(#3);
 		stopTempScale;
 		stopAutoLabeling;
 		}%
 	\else%
-		\drawFromCurrentPicture[\plal][arc#3]{startAutoLabeling;draw byNamedArc(#3);stopAutoLabeling;}%
+		\drawFromCurrentPicture[\plal][arc#3]{startAutoLabeling;draw byNamedArcSeq(0)(#3);stopAutoLabeling;}%
 	\fi%
 }}
 

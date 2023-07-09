@@ -1,7 +1,7 @@
-%    byrne-euclid 0.2.2
+%    byrne-euclid 0.2.4
 %    MetaPost library that implements most of the graphical
 %    features present in Oliver Byrne's version of Euclid's "Elements"
-%    Copyright 2022 Sergey Slyusarev
+%    Copyright 2023 Sergey Slyusarev
 %
 %    This program is free software: you can redistribute it and/or modify
 %    it under the terms of the GNU General Public License as published by
@@ -36,8 +36,34 @@ magnitudeScale := 1;
 magnitudeGap := 3/2lineWidth;
 markLength := 3lineWidth;
 rayExtension := 1/3cm;
+textLabelScaleFactor := 2/5;
 
-boolean textLabels, ghostLines, autoRightAngles, omitDuplicateTextLabels, autoLabelingMode, mainPictureMode;
+%
+% Some symbolic constants for better readability
+%
+
+SOLID_LINE := 0;
+DASHED_LINE := 1;
+
+SOLID_SECTOR := 0;
+ARC_SECTOR := 1;
+DASHED_ARC_SECTOR := 2;
+
+ALL_LABELS := 0;
+OMIT_LABELS_AT_STRAIGHT_ANGLES := 1;
+OMIT_FIRST_AND_LAST_LABEL := 2;
+OMIT_FIRST_LABEL := 3;
+OMIT_LAST_LABEL := 4;
+
+REGULAR_WIDTH := 0;
+THIN_WIDTH := 1;
+HAIR_WIDTH := 2;
+
+%
+% Some common settings
+%
+
+boolean textLabels, ghostLines, autoRightAngles, omitDuplicateTextLabels, autoLabelingMode, mainPictureMode, omitSpaceRotation;
 
 textLabels := false;
 ghostLines := true;
@@ -46,6 +72,7 @@ omitDuplicateTextLabels := false;
 textLabelShift := lineWidth;
 autoLabelingMode := false;
 mainPictureMode := false;
+omitSpaceRotation := false;
 
 boolean solidAngleMode;
 
@@ -54,6 +81,7 @@ solidAngleMode := false;
 numeric dpLength[];
 dpLength0 := 2lineWidth;
 dpLength1 := 2lineWidth;
+dpLength2 := 3/2lineWidth;
 
 vardef sin primary x = (sind(x*radian)) enddef;
 
@@ -116,6 +144,9 @@ outlineColor.byblackN := byblack;
 outlineColor.bygreyN := bygrey;
 bytransparent := 0.99white;
 
+cmykcolor bylabelcolor;
+bylabelcolor := (0, 0, 0, 1);
+
 byDefaultAngleOptionalColor := white;
 
 linecap := butt;
@@ -150,10 +181,16 @@ vardef typeOf (expr v) =
     determinedType
 enddef;
 
-vardef sign (expr x) =
-    if x > 0: 1 fi
-    if x < 0: -1 fi
-    if x = 0: 1 fi
+vardef sign@#(expr x) =
+    if str @# <> "mindZero":
+        if x > 0: 1 fi
+        if x < 0: -1 fi
+        if x = 0: 1 fi
+    else:
+        if x > 0: 1 fi
+        if x < 0: -1 fi
+        if x = 0: 0 fi
+    fi
 enddef;
 
 vardef colorLightness (expr col) =
@@ -280,8 +317,9 @@ vardef lineThickness (expr th) =
     fi
 enddef;
 
-vardef byDashPattern (expr l, dp) =
-    save d, n;
+vardef byDashPattern (expr l, dp, endsType) =
+    save d, n, p;
+    picture p;
     numeric d[], n;
     n := ceiling(l/(1/3dpLength[dp]));
     if (n mod 3) <> 2:
@@ -289,7 +327,26 @@ vardef byDashPattern (expr l, dp) =
     fi;
     d1 := 2(l/n);
     d2 := l/n;
-    dashpattern (on d1 off d2)
+    p := dashpattern (on d1 off d2);
+    if (endsType = 1):
+        n := n - (n mod 3);
+        d1 := 2(l/n);
+        d2 := l/n;
+        p := dashpattern (on d1 off d2);
+    elseif (endsType = 2):
+        n := n - (n mod 3);
+        d1 := 2(l/n);
+        d2 := l/n;
+        p := dashpattern (off d2 on d1);
+    elseif (endsType = 3):
+        if (n mod 3) <> 1:
+            n := n - (n mod 3) + 1;
+        fi;
+        d1 := 2(l/n);
+        d2 := l/n;
+        p := dashpattern (off d2 on d1);
+    fi;
+    p
 enddef;
 
 def startTempScale (expr tmpScale) =
@@ -611,11 +668,15 @@ vardef lineAndPlaneIntersection (expr lineA, lineB, planeA, planeB, planeC) =
     save planeNormal, planeOrigin, lineD;
     color planeNormal, planeOrigin;
     numeric lineD;
-    planeNormal := unitvectorXYZ((planeA-planeB) crossproduct (planeC-planeB));
+    planeNormal := normalToPlane(planeA, planeB, planeC);
     planeOrigin := planeB;
     lineD := ((planeNormal/cm) dotprodXYZ ((planeOrigin - lineA)/cm))
             /((planeNormal/cm) dotprodXYZ ((lineB - lineA)/cm));
     lineA + ((lineB-lineA)*lineD)
+enddef;
+
+vardef normalToPlane (expr planeA, planeB, planeC) =
+	unitvectorXYZ((planeA-planeB) crossproduct (planeC-planeB))
 enddef;
 
 vardef spaceRotated (suffix somepath)(expr someangle) =
@@ -778,7 +839,7 @@ enddef;
 % This section is dedicated to lines
 %
 
-vardef byLineRender (expr a, b, col, dp, th, c, d, ct, dt, s, sf) =
+vardef byLineRender (expr a, b, col, dp, th, c, d, ct, dt, dpt, s, sf) =
     save p, la, lineItself, lineBleeding, clippingPath, cutAngle, linePerp, lineStyShift, currentLineWidth, clippingPathPoint, aS, bS;
     picture p;
     path lineItself, lineBleeding, clippingPath;
@@ -822,9 +883,13 @@ vardef byLineRender (expr a, b, col, dp, th, c, d, ct, dt, s, sf) =
         if (dp > 0):
             draw (lineItself shifted lineStyShift) withcolor white;
             draw (lineItself shifted lineStyShift) withcolor col
-                dashed byDashPattern(arclength(lineItself), dp);
-            draw (subpath(0, 1) of lineBleeding shifted lineStyShift) withcolor col;
-            draw (subpath(2, 3) of lineBleeding shifted lineStyShift) withcolor col;
+                dashed byDashPattern(arclength(lineItself), dp, dpt);
+            if ((dpt = 0) or (dpt = 1)):
+                draw (subpath(0, 1) of lineBleeding shifted lineStyShift) withcolor col;
+            fi;
+            if ((dpt = 0) or (dpt = 2)):
+                draw (subpath(2, 3) of lineBleeding shifted lineStyShift) withcolor col;
+            fi;
         else:
             draw (lineBleeding shifted lineStyShift) withcolor col;
         fi;
@@ -860,8 +925,8 @@ vardef byLineRender (expr a, b, col, dp, th, c, d, ct, dt, s, sf) =
                 save ghostLines;
                 boolean ghostLines;
                 ghostLines := false;
-                draw byLineRender (a, b, white, dp, 2, c, d, ct, dt, s, sf);
-                % draw byLineRender (a, b, col, dp, 2, c, d, ct, dt, s, sf);
+                draw byLineRender (a, b, white, dp, 2, c, d, ct, dt, dpt, s, sf);
+                % draw byLineRender (a, b, col, dp, 2, c, d, ct, dt, dpt, s, sf);
             endgroup;
             );
     fi;
@@ -937,7 +1002,7 @@ if str @# = "":
     byLine.scantokens(str a & str b)(a, b)(col, dp, th)
 else:
     byLineDefine@#(a, b, col, dp, th);
-    byNamedLineFull(a, b, 0, 0, 0)(@#)
+    byNamedLineFull(a, b, 0, 0, 0, 0)(@#)
 fi
 enddef;
 
@@ -956,10 +1021,10 @@ enddef;
 vardef byLineWithName (suffix a, b)(expr col, dp, th)(suffix lineLabel) =
     byLineDefine.lineLabel(a, b, col, dp, th);
     setAttribute("line", "UseLineLabel", str lineLabel, true);
-    byNamedLineFull(a, b, 0, 0, 0)(lineLabel)
+    byNamedLineFull(a, b, 0, 0, 0, 0)(lineLabel)
 enddef;
 
-vardef byNamedLineFull (expr c, d, ct, dt, s) (suffix lineName) =
+vardef byNamedLineFull (expr c, d, ct, dt, dpt, s) (suffix lineName) =
     if (mainPictureMode):
         appendList(pointLinesList.scantokens(getAttribute("line", "EndAName", str lineName)), str lineName, 1, true);
         appendList(pointLinesList.scantokens(getAttribute("line", "EndBName", str lineName)), str lineName, 1, true);
@@ -970,7 +1035,7 @@ vardef byNamedLineFull (expr c, d, ct, dt, s) (suffix lineName) =
         getAttribute("line", "Color", str lineName),
         getAttribute("line", "Dashed", str lineName),
         getAttribute("line", "Thin", str lineName),
-        c, d, ct, dt, s, scaleFactor)
+        c, d, ct, dt, dpt, s, scaleFactor)
 enddef;
 
 vardef byNamedLine (text linesList) =
@@ -981,19 +1046,35 @@ vardef byNamedLine (text linesList) =
                 scantokens(getAttribute("line", "DirBName", str lN)),
                 getAttribute("line", "EndAType", str lN),
                 getAttribute("line", "EndBType", str lN),
+                0,
                 getAttribute("line", "Shift", str lN))(lN);
         endfor;
     )
 enddef;
 
+vardef byNamedLineIgnoreEndTypes (text linesList) =
+    image(
+        forsuffixes lN=linesList:
+            draw byNamedLineFull(
+                scantokens(getAttribute("line", "EndAName", str lN)),
+                scantokens(getAttribute("line", "EndBName", str lN)),
+                0,
+                0,
+                0,
+                0)(lN);
+        endfor;
+    )
+enddef;
+
 vardef byNamedLineSeq (expr s)(text linesListRaw) =
-    save lAname, lBname, lShift, lName, i, j, k, l, m, n, c, d, prp, pointNames, linesList;
+    save lAname, lBname, lShift, lName, i, j, k, l, m, n, c, d, prp, dpt, dashStreak, pointNames, linesList;
     string lAname[], lBname[], lName[], c, d, pointNames, linesList;
-    numeric i, j, k, l, m, n, prp, lShift[];
+    numeric i, j, k, l, m, n, prp, lShift[], dpt, dashStreak;
     linesList := byExpandLines(linesListRaw);
     pointNames := "";
     image(
         i := -1;
+        dashStreak := 0;
         forsuffixes lN=scantokens(linesList):
             i := i + 1;
             lAname[i] := getAttribute("line", "EndAName", str lN);
@@ -1013,54 +1094,56 @@ vardef byNamedLineSeq (expr s)(text linesListRaw) =
                 l := cycleval (j + 1, i + 1);
                 m := 0;
                 n := 0;
-                if (lAname[k] = "noLine"):
-                    k := cycleval (k - 1, i + 1);
+                if (lName[k] = "noLine"):
+                    k := cycleval (j - 2, i + 1);
                     m := 1;
                 fi;
-                if (lAname[l] = "noLine"):
-                    l := cycleval (l + 1, i + 1);
+                if (lName[l] = "noLine"):
+                    l := cycleval (j + 2, i + 1);
                     n := 1;
                 fi;
-                c := lAname[j];
-                d := lBname[j];
                 prp := 0;
-                if  (((lAname[j] = lAname[k]) or (lAname[j] = lBname[k]))
-                        and (not ((m <> 0) and (lName[k] = lName[l])))) or
-                    (((lBname[j] = lAname[l]) or (lBname[j] = lBname[l]))
-                        and (not ((n <> 0) and (lName[k] = lName[l])))):
-                    if (lAname[j] = lAname[k]):
-                        if (m = 0): c := lBname[k]; fi;
-                    elseif (lAname[j] = lBname[k]):
-                        if (m = 0): c := lAname[k]; fi;
-                    else:
-                        m := 2;
-                    fi;
-                    if (lBname[j] = lAname[l]):
-                        if (n = 0): d := lBname[l]; fi;
-                    elseif (lBname[j] = lBname[l]):
-                        if (n = 0): d := lAname[l]; fi;
-                    else:
-                        n := 2;
-                    fi;
-                    prp := 1;
-                else:
-                    if (lAname[j] = lAname[l]):
-                        if (n = 0): c := lBname[l]; fi;
-                    elseif (lAname[j] = lBname[l]):
-                        if (n = 0): c := lAname[l]; fi;
-                    else:
-                        n := 2;
-                    fi;
-                    if (lBname[j] = lAname[k]):
-                        if (m = 0): d := lBname[k]; fi;
-                    elseif (lBname[j] = lBname[k]):
-                        if (m = 0): d := lAname[k]; fi;
-                    else:
-                        m := 2;
-                    fi;
-                    prp := -1;
-                fi;
                 if (lName[j] <> "noLine"):
+                    c := lAname[j];
+                    d := lBname[j];
+                    %if (lName[k] <> lName[l]):
+                        if  (((lAname[j] = lAname[k]) or (lAname[j] = lBname[k])) and (m = 0)) or
+                                %and (not ((m <> 0) and (lName[k] = lName[l])))) or
+                            (((lBname[j] = lAname[l]) or (lBname[j] = lBname[l])) and (n = 0)):
+                                %and (not ((n <> 0) and (lName[k] = lName[l])))):
+                            if (lAname[j] = lAname[k]):
+                                if (m = 0): c := lBname[k]; fi;
+                            elseif (lAname[j] = lBname[k]):
+                                if (m = 0): c := lAname[k]; fi;
+                            else:
+                                m := 2;
+                            fi;
+                            if (lBname[j] = lAname[l]):
+                                if (n = 0): d := lBname[l]; fi;
+                            elseif (lBname[j] = lBname[l]):
+                                if (n = 0): d := lAname[l]; fi;
+                            else:
+                                n := 2;
+                            fi;
+                            prp := 1;
+                        else:
+                            if (lAname[j] = lAname[l]):
+                                if (n = 0): c := lBname[l]; fi;
+                            elseif (lAname[j] = lBname[l]):
+                                if (n = 0): c := lAname[l]; fi;
+                            else:
+                                n := 2;
+                            fi;
+                            if (lBname[j] = lAname[k]):
+                                if (m = 0): d := lBname[k]; fi;
+                            elseif (lBname[j] = lBname[k]):
+                                if (m = 0): d := lAname[k]; fi;
+                            else:
+                                m := 2;
+                            fi;
+                            prp := -1;
+                        fi;
+                    %fi;
                     if (prp = 1):
                         pointNames := pointNames & lAname[j] & ", ";
                         if (n = 2):
@@ -1073,7 +1156,29 @@ vardef byNamedLineSeq (expr s)(text linesListRaw) =
                         fi;
                     fi;
                     lShift[j] := s*prp;
-                    draw byNamedLineFull(scantokens(c), scantokens(d), 0, 0, -s*sign(prp))(scantokens(lName[j]));
+                    dpt := 0;
+                    if (c <> lAname[j]):
+                        if abs(unitvector(scantokens(c) - scantokens(lAname[j])) - unitvector(scantokens(lAname[j]) - scantokens(lBname[j]))) < 1/100:
+                            dpt := dpt + 2;
+                        fi;
+                    fi;
+                    if (d <> lBname[j]):
+                        if abs(unitvector(scantokens(d) - scantokens(lBname[j])) - unitvector(scantokens(lBname[j]) - scantokens(lAname[j]))) < 1/100:
+                            dpt := dpt + 1;
+                        fi;
+                    fi;
+                    if (dashStreak > 0):
+                        if (prp = 1): dpt := dpt - 2; fi;
+                        if (prp = -1): dpt := dpt - 1; fi;
+                    fi;
+                    if (getAttribute("line", "Dashed", lName[j]) > 0)
+                        and (((prp = 1) and ((dpt <> 0) and (dpt <> 2)))
+                            or ((prp = -1) and ((dpt <> 0) and (dpt <> 1)))):
+                        dashStreak := dashStreak + 1;
+                    else:
+                        dashStreak := 0;
+                    fi;
+                    draw byNamedLineFull(scantokens(c), scantokens(d), 0, 0, dpt, -s*sign(prp))(scantokens(lName[j]));
                 else:
                     prp := -2;
                 fi;
@@ -1086,7 +1191,7 @@ vardef byNamedLineSeq (expr s)(text linesListRaw) =
                 pointNames := substring (0, length(pointNames)-2) of pointNames;
             fi;
             if (textLabels and autoLabelingMode):
-                draw byLabelsOnPolygon(scantokens pointNames)(1, s);
+                draw byLabelsOnPolygon(scantokens pointNames)(OMIT_LABELS_AT_STRAIGHT_ANGLES, s);
             fi;
         else:
             forsuffixes lN=scantokens(linesList):
@@ -1094,9 +1199,9 @@ vardef byNamedLineSeq (expr s)(text linesListRaw) =
                 draw byNamedLineFull(
                     scantokens(getAttribute("line", "EndAName", str lN)),
                     scantokens(getAttribute("line", "EndBName", str lN)),
-                    0, 0, -s)(lN);
+                    0, 0, 0, -s)(lN);
                 if (textLabels and autoLabelingMode):
-                    draw byLabelsOnPolygon(scantokens (getAttribute("line", "EndAName", str lN) & ", " & getAttribute("line", "EndBName", str lN)))(1, s);
+                    draw byLabelsOnPolygon(scantokens (getAttribute("line", "EndAName", str lN) & ", " & getAttribute("line", "EndBName", str lN)))(OMIT_LABELS_AT_STRAIGHT_ANGLES, s);
                 fi;
             endfor;
         fi;
@@ -1230,8 +1335,8 @@ vardef byNamedCompoundIndLine (expr cu, pw)(text linesList) =
 enddef;
 
 vardef byNamedCompoundLineRender (expr cu, pw, sty)(text linesList) =
-    save correctedLength, currentPosition, a, b, sc, totalLength, pwL, lineNames, endNames, i, j, angleCheck, lineNotStraight, lineNotContinuous, globalRotation, extensionNames, textLabelImage;
-    numeric correctedLength, currentPosition[], sc, totalLength, pwL, i, j, angleCheck[];
+    save correctedLength, currentPosition, a, b, sc, totalLength, pwL, lineNames, endNames, i, j, angleCheck, dpt, dashStreak, lineNotStraight, lineNotContinuous, globalRotation, extensionNames, textLabelImage;
+    numeric correctedLength, currentPosition[], sc, totalLength, pwL, i, j, angleCheck[], dpt, dashStreak;
     globalRotation := 0;
     string lineNames[], endNames[], extensionNames[];
     pair a, b;
@@ -1278,12 +1383,28 @@ vardef byNamedCompoundLineRender (expr cu, pw, sty)(text linesList) =
     currentPosition0 := 0;
     image(
         j := 0;
+        dashStreak := 0;
         forsuffixes lN=linesList:
             correctedLength := (byReturnLineLength(
                 scantokens(getAttribute("line", "EndAName", str lN)),
                 scantokens(getAttribute("line", "EndBName", str lN))
                     )**pwL)*sc;
             currentPosition1 := currentPosition0 + correctedLength;
+            dpt := 0;
+            if (j > 0):
+                dpt := dpt + 2;
+            fi;
+            if (j < i/2 - 1):
+                dpt := dpt + 1;
+            fi;
+            if (dashStreak > 0):
+                dpt := dpt - 2;
+            fi;
+            if (getAttribute("line", "Dashed", str lN) > 0):
+                dashStreak := dashStreak + 1;
+            else:
+                dashStreak := 0;
+            fi;
             a := (currentPosition0, 0);
             b := (currentPosition1, 0);
             draw byLineRender(
@@ -1291,7 +1412,7 @@ vardef byNamedCompoundLineRender (expr cu, pw, sty)(text linesList) =
                 getAttribute("line", "Color", str lN),
                 getAttribute("line", "Dashed", str lN),
                 getAttribute("line", "Thin", str lN),
-                a, b, 0, 0, 0, scaleFactor);
+                a, b, 0, 0, dpt, 0, scaleFactor);
             currentPosition0 := currentPosition1;
             if (i > 2):
                 if (j = 0):
@@ -1335,19 +1456,24 @@ vardef byNamedCompoundLineRender (expr cu, pw, sty)(text linesList) =
         else:
             extensionNames3 := extensionNames1;
         fi;
+        dpt := 0;
         if (sty > 0):
+            if (xpart(b) > 0):
+                dpt := 1;
+            fi;
             draw byLineRender(b, b shifted (rayExtension/scaleFactor, 0),
                 getAttribute("line", "Color", extensionNames0),
                 getAttribute("line", "Dashed", extensionNames0),
                 getAttribute("line", "Thin", extensionNames2),
-                b, b shifted (rayExtension/scaleFactor, 0), 0, 0, 0, scaleFactor);
+                b, b shifted (rayExtension/scaleFactor, 0), 0, 0, dpt, 0, scaleFactor);
         fi;
         if (sty > 1):
+            dpt := 1;
             draw byLineRender((0, 0), (0, 0) shifted (-rayExtension/scaleFactor, 0),
                 getAttribute("line", "Color", extensionNames1),
                 getAttribute("line", "Dashed", extensionNames1),
                 getAttribute("line", "Thin", extensionNames3),
-                (0, 0), (0, 0) shifted (-rayExtension/scaleFactor, 0), 0, 0, 0, scaleFactor);
+                (0, 0), (0, 0) shifted (-rayExtension/scaleFactor, 0), 0, 0, dpt, 0, scaleFactor);
         fi;
         if (textLabels and autoLabelingMode):
             if unknown endNames[2]:
@@ -1448,6 +1574,19 @@ vardef byIsPointInSpace (text pointNames) =
     (true forsuffixes pN = pointNames:
         and (typeOf(pointXYZ.pN) = "color")
     endfor)
+enddef;
+
+vardef projectPointIfInSpace(expr pointValue) =
+save rv, projPoint;
+pair rv;
+	if (typeOf(pointValue) = "color"):
+		color projPoint;
+		projPoint := pointValue colorrotated projectionAngle;
+		rv := (redpart(projPoint), greenpart(projPoint));
+	else:
+		rv := pointValue;
+	fi;
+	rv
 enddef;
 
 % in order to automatically project points they need to be added
@@ -1604,23 +1743,23 @@ if known pointLinesList.pointName:
                 if (i <> maxDistEndA) and (i <> maxDistEndB) and (not omitLine[i]):
                     draw byLineRender(pointName, distantEnds[i],
                         getAttribute("line", "Color", lineNames[i]), getAttribute("line", "Dashed", lineNames[i]), getAttribute("line", "Thin", lineNames[i]),
-                        pointName, distantEnds[i], 0, 0, 0, scaleFactor);
+                        pointName, distantEnds[i], 0, 0, 0, 0, scaleFactor);
                 fi;
             endfor;
             draw byLineRender(pointName, distantEnds[maxDistEndA],
                 getAttribute("line", "Color", lineNames[maxDistEndA]),
                 getAttribute("line", "Dashed", lineNames[maxDistEndA]),
                 getAttribute("line", "Thin", lineNames[maxDistEndA]),
-                distantEnds[maxDistEndB], distantEnds[maxDistEndA], 0, 0, 0, scaleFactor);
+                distantEnds[maxDistEndB], distantEnds[maxDistEndA], 0, 0, 2, 0, scaleFactor);
             draw byLineRender(pointName, distantEnds[maxDistEndB],
                 getAttribute("line", "Color", lineNames[maxDistEndB]),
                 getAttribute("line", "Dashed", lineNames[maxDistEndB]),
                 getAttribute("line", "Thin", lineNames[maxDistEndB]),
-                distantEnds[maxDistEndA], distantEnds[maxDistEndB], 0, 0, 0, scaleFactor);
+                distantEnds[maxDistEndA], distantEnds[maxDistEndB], 0, 0, 2, 0, scaleFactor);
                 );
         labelImage := image(
             if (textLabels):
-                draw byLabelsOnPolygon(scantokens(pointNames[maxAngleEndA]),pointName,scantokens(pointNames[maxAngleEndB]))(2, 0);
+                draw byLabelsOnPolygon(scantokens(pointNames[maxAngleEndA]),pointName,scantokens(pointNames[maxAngleEndB]))(OMIT_FIRST_LABEL + OMIT_LAST_LABEL, 0);
             fi;
             );
     else:
@@ -1629,7 +1768,7 @@ if known pointLinesList.pointName:
                 getAttribute("line", "Color", lineNames[safeLine]),
                 getAttribute("line", "Dashed", lineNames[safeLine]),
                 getAttribute("line", "Thin", lineNames[safeLine]),
-                pointName, distantEnds[safeLine], 0, 0, 0, scaleFactor);
+                pointName, distantEnds[safeLine], 0, 0, 0, 0, scaleFactor);
             );
         labelImage := image(
             if (textLabels):
@@ -1661,17 +1800,19 @@ vardef byCirclePathGenerate (expr sr, pv) =
     numeric xang, yang;
     pair xp;
     circPath := fullcircle;
-    xp := (bluepart(pv), greenpart(pv));
-    xang := angle(xp);
-    pvt := (redpart(pv), ypart(xp rotated -xang), xpart(xp rotated -xang));
-    yang := angle((bluepart(pvt), redpart(pvt)));
-    circPath := spaceRotated(circPath)((-xang, yang, 0)); % plane vector to angles conversion should eventually go somewhere
-    circPath := spaceRotated(circPath)(sr);
-    circPath := spaceRotated(circPath)(projectionAngle);
+	if (not omitSpaceRotation):
+		xp := (bluepart(pv), greenpart(pv));
+		xang := angle(xp);
+		pvt := (redpart(pv), ypart(xp rotated -xang), xpart(xp rotated -xang));
+		yang := angle((bluepart(pvt), redpart(pvt)));
+		circPath := spaceRotated(circPath)((-xang, yang, 0)); % plane vector to angles conversion should eventually go somewhere
+		circPath := spaceRotated(circPath)(sr);
+		circPath := spaceRotated(circPath)(projectionAngle);
+	fi;
     circPath
 enddef;
 
-vardef byArcRender (expr o, b, e, r, sr, pv, col, dp, th, s, et) =
+vardef byArcRender (expr o, b, e, r, sr, pv, col, dp, th, dpt, s, et) =
     save p, q, m, t, currentLineWidth, srCircle;
     path p[], srCircle;
     picture q;
@@ -1682,14 +1823,15 @@ vardef byArcRender (expr o, b, e, r, sr, pv, col, dp, th, s, et) =
     image(
         srCircle := byCirclePathGenerate(sr, pv);
         currentLineWidth := lineThickness(th);
-        p0 := ((subpath (b, e) of srCircle) scaled (r*scaleFactor + lineWidth*s + lineWidth)) shifted (o*scaleFactor);
+        p0 := ((subpath (b, e) of srCircle) scaled (r*scaleFactor + 2lineWidth*s + lineWidth)) shifted (o*scaleFactor);
         p1 := ((subpath (b, e) of srCircle) scaled (r*scaleFactor)) shifted (o*scaleFactor);
-        p2 := (srCircle scaled (r*scaleFactor + lineWidth*s + lineWidth)) shifted (o*scaleFactor);
-        p3 := ((subpath (b, e) of srCircle) scaled (r*scaleFactor + lineWidth*s)) shifted (o*scaleFactor);
-        p4 := ((subpath (b + sign(b-e)*1/16, b) of srCircle) scaled (r*scaleFactor + lineWidth*s)) shifted (o*scaleFactor);
-        p5 := ((subpath (e, e + sign(e-b)*1/16) of srCircle) scaled (r*scaleFactor + lineWidth*s)) shifted (o*scaleFactor);
+        p2 := (srCircle scaled (r*scaleFactor + 2lineWidth*s + lineWidth)) shifted (o*scaleFactor);
+        p3 := ((subpath (b, e) of srCircle) scaled (r*scaleFactor + 2lineWidth*s)) shifted (o*scaleFactor);
+        p4 := ((subpath (b + sign(b-e)*1/16, b) of srCircle) scaled (r*scaleFactor + 2lineWidth*s)) shifted (o*scaleFactor);
+        p5 := ((subpath (e, e + sign(e-b)*1/16) of srCircle) scaled (r*scaleFactor + 2lineWidth*s)) shifted (o*scaleFactor);
         q := image(
-            draw p3 withpen pencircle scaled currentLineWidth withcolor col if (dp > 0): dashed byDashPattern(arclength(p3), dp) fi;
+            draw p3 withpen pencircle scaled currentLineWidth withcolor white;
+            draw p3 withpen pencircle scaled currentLineWidth withcolor col if (dp > 0): dashed byDashPattern(arclength(p3), dp, dpt) fi;
             draw p4 withpen pencircle scaled currentLineWidth withcolor col;
             draw p5 withpen pencircle scaled currentLineWidth withcolor col;
         );
@@ -1783,6 +1925,64 @@ else:
 fi
 enddef;
 
+vardef byNamedArcSeq (expr s)(text arcslist) =
+    save i, j, arcC, arcD, dpt, dashStreak;
+    numeric i, j, arcD, dpt[], dashStreak;
+    string arcC;
+    dashStreak := 0;
+    image(
+    i := 0;
+    forsuffixes aNi=arcslist:
+        j := 0;
+        dpt[i] := 0;
+        if getAttribute("arc", "Dashed", str aNi) > 0:
+            forsuffixes aNj=arcslist:
+                if (i <> j)
+                    and (getAttribute("arc", "CenterName", str aNi) = getAttribute("arc", "CenterName", str aNj))
+                    and (getAttribute("arc", "Diameter", str aNi) = getAttribute("arc", "Diameter", str aNj)):
+                    if (abs(
+                            (point getAttribute("arc", "Begin", str aNi) of fullcircle) -
+                            (point getAttribute("arc", "End", str aNj) of fullcircle)
+                            ) < 1/100):
+                        dpt[i] := dpt[i] + 2;
+                    fi;
+                    if (abs(
+                            (point getAttribute("arc", "End", str aNi) of fullcircle) -
+                            (point getAttribute("arc", "Begin", str aNj) of fullcircle)
+                            ) < 1/100):
+                        if getAttribute("arc", "Dashed", str aNj) = 0:
+                            dpt[i] := dpt[i] + 1;
+                        fi;
+                    fi;
+                fi;
+                j := j + 1;
+            endfor;
+        fi;
+        i := i + 1;
+    endfor;
+    i := 0;
+    forsuffixes aN=arcslist:
+        draw byArcRender(
+            scantokens(getAttribute("arc", "CenterName", str aN)),
+            getAttribute("arc", "Begin", str aN),
+            getAttribute("arc", "End", str aN),
+            getAttribute("arc", "Diameter", str aN),
+            getAttribute("arc", "SpaceRotation", str aN),
+            getAttribute("arc", "PlaneVector", str aN),
+            getAttribute("arc", "Color", str aN),
+            getAttribute("arc", "Dashed", str aN),
+            getAttribute("arc", "Thin", str aN),
+            dpt[i],
+            s,
+            getAttribute("arc", "EndType", str aN));
+        i := i + 1;
+    endfor;
+    if (autoLabelingMode):
+        draw byNamedArcLabel(arcslist);
+    fi;
+    )
+enddef;
+
 vardef byNamedArcExact (text arcslist) =
     image(
         forsuffixes aN=arcslist:
@@ -1796,6 +1996,7 @@ vardef byNamedArcExact (text arcslist) =
                 getAttribute("arc", "Color", str aN),
                 getAttribute("arc", "Dashed", str aN),
                 getAttribute("arc", "Thin", str aN),
+                0,
                 getAttribute("arc", "Shift", str aN),
                 getAttribute("arc", "EndType", str aN));
         endfor;
@@ -1817,7 +2018,7 @@ vardef byNamedArc (text arcslist) =
                 getAttribute("arc", "PlaneVector", str aN),
                 getAttribute("arc", "Color", str aN),
                 getAttribute("arc", "Dashed", str aN),
-                getAttribute("arc", "Thin", str aN), 0, 0);
+                getAttribute("arc", "Thin", str aN), 0, 0, 0);
         endfor;
         if (autoLabelingMode):
             draw byNamedArcLabel(arcslist);
@@ -1948,9 +2149,9 @@ else:
 fi
 enddef;
 
-vardef byCircleABC@#(suffix a, b, c)(expr col, dp, th, s) =
+vardef byCircleABCDefine@#(suffix a, b, c)(expr col, dp, th, s) =
 if str @# = "":
-    byCircleABC.scantokens(str a & str b & str c)(a, b, c)(col, dp, th, s)
+    byCircleABCDefine.scantokens(str a & str b & str c)(a, b, c)(col, dp, th, s)
 else:
     save o, r;
     pair o;
@@ -1971,7 +2172,15 @@ else:
         pv := unitvectorXYZ((pointXYZ.a - pointXYZ.b) crossproduct (pointXYZ.c - pointXYZ.b));
         setAttribute("circle", "PlaneVector", str @#, pv);
     fi;
-    byNamedCircle(@#)
+fi;
+enddef;
+
+vardef byCircleABC@#(suffix a, b, c)(expr col, dp, th, s) =
+if str @# = "":
+    byCircleABC.scantokens(str a & str b & str c)(a, b, c)(col, dp, th, s)
+else:
+	byCircleABCDefine@#(a, b, c)(col, dp, th, s);
+	byNamedCircle(@#)
 fi
 enddef;
 
@@ -2011,7 +2220,7 @@ vardef byReturnCircleCenter (expr circleName) =
             scantokens(getAttribute("circle", "CName", circleName))
             )
     else:
-        getAttribute("circle", "Center", circleName)
+        projectPointIfInSpace(getAttribute("circle", "Center", circleName))
     fi
 enddef;
 
@@ -2029,6 +2238,7 @@ vardef byNamedCircle (text circlesList) =
                 getAttribute("circle", "Color", str cN),
                 getAttribute("circle", "Dashed", str cN),
                 getAttribute("circle", "Thin", str cN),
+                0,
                 getAttribute("circle", "Shift", str cN), 0);
             if (textLabels and autoLabelingMode):
                 if (getAttribute("circle", "CenterName", str cN) <> ""):
@@ -2096,7 +2306,7 @@ vardef byArbitraryFigureRender (expr p, col, dp, th) =
             withpen pencircle scaled lineThickness(th)
             withcolor col
             if (dp > 0):
-                dashed byDashPattern(arclength(p), dp)
+                dashed byDashPattern(arclength(p), dp, 0)
             fi;
         )
 enddef;
@@ -2134,7 +2344,7 @@ vardef byNamedArbitraryCurve (text curvesList) =
                     getAttribute("arbitraryCurve", "Thin", str cN)) rotated globalRotation;
             if (autoLabelingMode):
                 if (textLabels):
-                    draw byLabelsOnPolygon(scantokens(getAttribute("arbitraryCurve", "PointsList", str cN)), noPoint)(1, 0);
+                    draw byLabelsOnPolygon(scantokens(getAttribute("arbitraryCurve", "PointsList", str cN)), noPoint)(OMIT_LABELS_AT_STRAIGHT_ANGLES, 0);
                 fi;
             fi;
         endfor;
@@ -2748,7 +2958,7 @@ vardef byAngleMDashedLine (expr angleArc, angleColor)(suffix angleOptionalColors
         if (angleOptionalColors[0] <> bytransparent):
             fill (p--(0,0)--cycle) withcolor angleOptionalColors[0];
         fi;
-        draw p withpen pencircle scaled lineWidth withcolor angleColor dashed byDashPattern(arclength(p), 1);
+        draw p withpen pencircle scaled lineWidth withcolor angleColor dashed byDashPattern(arclength(p), 1, 0);
         draw (0,0); % draws nothing. for some reason dashing seems to "leak" without this.
     )
 enddef;
@@ -2761,12 +2971,12 @@ enddef;
 % to angle outline.
 vardef byNamedAngleSidesFull (text anglesList)(text linesList)=
     save centerName, uniqueCenter, angleGenArc, angleDir, angleCount, angleType, angleSide, anglePart, angleNum, angleCheck,
-        ac, as, p, n, compoundAnglePath, compoundAngleArc, b, e, outputImage, lineCol, lineTh, lineDash, pointName, scaleToUse,
+        ac, as, ad, p, n, compoundAnglePath, compoundAngleArc, b, e, outputImage, lineCol, lineTh, lineDash, pointName, scaleToUse,
         processedAnglesList, processedLinesList,
         planePoints, threeDMode, projectedCircle, labelVector,
         enteredAnglePointsList, pointNameToUse;
     string centerName, pointName[], processedAnglesList, processedLinesList,enteredAnglePointsList, pointNameToUse;
-    pair ac, p[], labelVector;
+    pair ac, ad[], p[], labelVector;
     boolean uniqueCenter, angleCheck, doNotLabelCenter, threeDMode;
     numeric angleDir[], angleCount[], angleType[], angleSide[], angleNum, anglePart[], as[], n[], b, e, lineTh, lineDash, scaleToUse;
     path angleGenArc, compoundAnglePath, compoundAngleArc, projectedCircle;
@@ -2834,9 +3044,17 @@ vardef byNamedAngleSidesFull (text anglesList)(text linesList)=
                         scantokens(getAttribute("angle", "CName", str aN)),
                         getAttribute("angle", "ArcType", str aN));
                     anglePart1 := angle(point 0 of angleGenArc);
-                    as1 := sign(ypart((direction 0 of angleGenArc) rotated -anglePart1));
+                    ad1 := direction 0 of (angleGenArc rotated -anglePart1);
+                    if (ad1 = (0, 0)):
+                        ad1 := direction 1 of (angleGenArc rotated -anglePart1);
+                    fi;
+                    as1 := sign(ypart(ad1));
                     anglePart2 := angle(point 0 of reverse(angleGenArc));
-                    as2 := sign(ypart((direction 0 of reverse(angleGenArc)) rotated -anglePart2));
+                    ad2 := direction 0 of (reverse(angleGenArc) rotated -anglePart2);
+                    if (ad2 = (0, 0)):
+                        ad2 := direction 1 of (reverse(angleGenArc) rotated -anglePart2);
+                    fi;
+                    as2 := sign(ypart(ad2));
                     for j=1,2:
                         angleCheck := true;
                         for i := 1 step 1 until angleNum:
@@ -2916,9 +3134,9 @@ vardef byNamedAngleSidesFull (text anglesList)(text linesList)=
                             fi;
                         endfor;
                         if (angleCount[i] > 1):
-                            draw byLineRender (p1, p2, lineCol, lineDash, lineTh, p1, p2, t, 0, 0, 1);
+                            draw byLineRender (p1, p2, lineCol, lineDash, lineTh, p1, p2, t, 0, 0, 0, 1);
                         else:
-                            draw byLineRender (p1, p2, lineCol, lineDash, lineTh, p1, p2, 0, 0, -angleSide[i], 1);
+                            draw byLineRender (p1, p2, lineCol, lineDash, lineTh, p1, p2, 0, 0, 0, -angleSide[i], 1);
                         fi;
                     fi;
                 endfor;
@@ -2972,14 +3190,22 @@ vardef byNamedAngleSidesFull (text anglesList)(text linesList)=
                             fi;
                         endfor;
                     fi;
-                    draw byTextLabel(pointLabel)(pointNameToUse,
-                        ac + (labelVector*1/2angleSize*angleScale)/scaleFactor, angleDir[n[i]], textLabelShift);
+					draw byLabelAngleSide(scantokens(centerName), scantokens(pointNameToUse));
                 endfor;
                 if not doNotLabelCenter:
-                    draw byTextLabel(pointLabel)(centerName, ac, angle((point (arctime(1/2arclength(compoundAngleArc)) of compoundAngleArc) of compoundAngleArc) shifted (-ac*scaleFactor)) + 180, textLabelShift);
+                    draw byTextLabel(pointLabel)(centerName, ac, angle((point (arctime (1/2arclength(compoundAngleArc)) of compoundAngleArc) of compoundAngleArc) shifted (-ac*scaleFactor)) + 180, textLabelShift);
                 fi;
             fi;
         stopTempAngleScale;
+    )
+enddef;
+
+vardef byLabelAngleSide(suffix centerPoint, targetPoint) =
+    image(
+        if (textLabels):
+            draw byTextLabel(pointLabel)(str targetPoint,
+                        centerPoint + (unitvector(targetPoint-centerPoint)*1/2angleSize*angleScale)/scaleFactor, angle(targetPoint - centerPoint), textLabelShift);
+        fi;
     )
 enddef;
 
@@ -3437,25 +3663,66 @@ enddef;
 % Spheres
 %
 
-%vardef bySphereDefine@#(expr ox, oy, oz, r) =
-%if str @# = "":
-%    errmessage("bySphereDefine needs a name (bySphereDefine.somename...)");
-%else:
-%    if mainPictureMode:
-%        appendList(allSpheresList, str @#, 1, true);
-%    fi;
-%    setAttribute("sphere", "XYZ", str @#, (ox, oy, oz));
-%    setAttribute("sphere", "radius", str @#, r);
-%fi;
-%enddef;
-%
-%vardef byNamedSphere (test spheresList) =
-%    image(
-%        forsuffixes cN=spheresList:
-%        endfor;
-%        )
-%enddef;
-%
+vardef bySphereDefine@#(suffix o)(expr r, col, dp, th, s) =
+if str @# = "":
+    errmessage("bySphereDefine needs a name (bySphereDefine.somename...)");
+else:
+    %if mainPictureMode:
+    %    appendList(allSpheresList, str @#, 1, true);
+    %fi;
+	setAttribute("sphere", "CenterName", str @#, str o);
+    setAttribute("sphere", "Radius", str @#, r);
+    setAttribute("sphere", "Diameter", str @#, 2r);
+	setAttribute("sphere", "Color", str @#, col);
+    setAttribute("sphere", "Dashed", str @#, dp);
+    setAttribute("sphere", "Thin", str @#, th);
+    setAttribute("sphere", "Shift", str @#, s);
+fi;
+enddef;
+
+vardef byNamedSphere (text spheresList) =
+save omitSpaceRotation;
+boolean omitSpaceRotation;
+omitSpaceRotation := true;
+    image(
+        forsuffixes cN=spheresList:
+			draw byArcRender (
+				scantokens(getAttribute("sphere", "CenterName", str cN)), 0, 8,
+				getAttribute("sphere", "Diameter", str cN),
+				(0,0,0),
+				(0,0,1),
+				getAttribute("sphere", "Color", str cN),
+				getAttribute("sphere", "Dashed", str cN),
+				getAttribute("sphere", "Thin", str cN),
+				0,
+				getAttribute("sphere", "Shift", str cN), 0);
+			if (textLabels and autoLabelingMode):
+			fi;
+        endfor;
+        )
+enddef;
+
+vardef bySpherePlaneIntersectionDefine@#(suffix sphName, planeA, planeB, planeC)(expr col, dp, th, s) =
+if str @# = "":
+    errmessage("bySpherePlaneIntersectionDefine needs a name (bySpherePlaneIntersectionDefine.somename...)");
+else:
+	save sphCenterPoint, sphRadius, sectCenter, sectRadius, sectPlaneVector, distToIntersection;
+	color sphCenterPoint, sectionCenter,sectionPlaneVector;
+	numeric sectionRadius, sphRadius;
+		sphCenterPoint := pointXYZ.scantokens(getAttribute("sphere", "CenterName", str sphName));
+		sphRadius := getAttribute("sphere", "Radius", str sphName);
+		sectionCenter := lineAndPlaneIntersection(sphCenterPoint, sphCenterPoint + normalToPlane(pointXYZ.planeA, pointXYZ.planeB, pointXYZ.planeC), pointXYZ.planeA, pointXYZ.planeB, pointXYZ.planeC);
+		distToIntersection := absXYZ(sectionCenter-sphCenterPoint);
+		if (distToIntersection > sphRadius):
+			errmessage("Sphere " & str sphName & " and plane " & str planeA & str planeB & str planeC & " don't seem to intersect");
+		fi;
+		sectionRadius := sqrt(1-(distToIntersection/sphRadius)**2)*sphRadius;
+		byCircleDefineFree.@#(sectionCenter, sectionRadius, col, dp, th, s);
+		sectionPlaneVector := unitvectorXYZ((pointXYZ.planeA - pointXYZ.planeB) crossproduct (pointXYZ.planeC - pointXYZ.planeB));
+		setAttribute("circle", "PlaneVector", str @#, sectionPlaneVector);
+fi;
+enddef;
+
 %vardef byFindSpheresIntersection (text spheresList) =
 %enddef;
 
@@ -3622,14 +3889,14 @@ enddef;
 
 if known metafunversion:
     vardef textLabelRender(expr t) =
-        textext("\textsf{" & t & "}") scaled 2/5
+        textext("\pointlabel{" & t & "}") scaled textLabelScaleFactor
     enddef;
 else:
     input TEX;
-    TEXPRE("%&latex" & char(10) & "\documentclass{article}\usepackage[utf8]{inputenc}\usepackage[russian]{babel}\begin{document}");
+    TEXPRE("%&latex" & char(10) & "\documentclass{article}\usepackage[utf8]{inputenc}\usepackage[russian]{babel}\def\pointlabel#1{\textsf{#1}}\begin{document}");
     TEXPOST("\end{document}");
     vardef textLabelRender(expr t) =
-        TEX("\textsf{" & t & "}") scaled 2/5
+        TEX("\pointlabel{" & t & "}") scaled textLabelScaleFactor
     enddef;
 fi;
 
@@ -3655,7 +3922,10 @@ vardef byTextLabel(suffix labelType)(expr t, p, a, d) =
             labelItself := labelItself shifted -(bb intersectionpoint ((0,0)--(dir(a+180+globalRotation)*1cm)));
         fi;
         labelItself := image(
-            draw labelItself shifted ((p scaled scaleFactor) rotated globalRotation) shifted (dir(a+globalRotation)*d);
+            draw labelItself 
+				shifted ((p scaled scaleFactor) rotated globalRotation) 
+				shifted (dir(a+globalRotation)*d)
+				withcolor bylabelcolor;
         );
     else:
         labelItself := image();
@@ -3672,6 +3942,10 @@ vardef byLabelPoint(suffix p)(expr a, d) =
 enddef;
 
 vardef byLabelLine(expr d)(text linesList) =
+	byLabelLineFull(d, ALL_LABELS)(linesList)
+enddef;
+
+vardef byLabelLineFull(expr d, sty)(text linesList) =
     save a;
     numeric a;
     if (d = 0):
@@ -3688,16 +3962,20 @@ vardef byLabelLine(expr d)(text linesList) =
                         scantokens(getAttribute("line", "EndBName", str lN))],
                     getAttribute("line", "Angle", str lN) + a, textLabelShift);
             else:
-                draw byTextLabel(pointLabel)(
-                    getAttribute("line", "EndAName", str lN),
-                    scantokens(getAttribute("line", "EndAName", str lN)),
-                    getAttribute("line", "Angle", str lN) + a,
-                    textLabelShift);
-                draw byTextLabel(pointLabel)(
-                    getAttribute("line", "EndBName", str lN),
-                    scantokens(getAttribute("line", "EndBName", str lN)),
-                    getAttribute("line", "Angle", str lN) + a,
-                    textLabelShift);
+				if (sty = ALL_LABELS) or (sty = OMIT_LAST_LABEL):
+					draw byTextLabel(pointLabel)(
+						getAttribute("line", "EndAName", str lN),
+						scantokens(getAttribute("line", "EndAName", str lN)),
+						getAttribute("line", "Angle", str lN) + a,
+						textLabelShift);
+				fi;
+				if (sty = ALL_LABELS) or (sty = OMIT_FIRST_LABEL):
+					draw byTextLabel(pointLabel)(
+						getAttribute("line", "EndBName", str lN),
+						scantokens(getAttribute("line", "EndBName", str lN)),
+						getAttribute("line", "Angle", str lN) + a,
+						textLabelShift);
+				fi;
             fi;
         endfor;
         fi;
@@ -3707,7 +3985,7 @@ enddef;
 vardef byLabelPolygon(expr d)(text polygonsList) =
     image(
         if (textLabels):
-            draw byLabelsOnPolygon(scantokens byMergePolygons(polygonsList))(1, d);
+            draw byLabelsOnPolygon(scantokens byMergePolygons(polygonsList))(OMIT_LABELS_AT_STRAIGHT_ANGLES, d);
         fi;
     )
 enddef;
@@ -3716,7 +3994,7 @@ vardef byLabelCircle(expr l, cn) =
     save o, d;
     pair o;
     numeric d;
-    o := getAttribute("circle", "Center", cn);
+    o := projectPointIfInSpace(getAttribute("circle", "Center", cn));
     d := lineThickness(getAttribute("circle", "Thin", cn))*(1/2-1/2getAttribute("circle", "Shift", cn));
     byTextLabel(pointLabel)(l, scantokens(l), angle(o - scantokens(l)), textLabelShift + d)
 enddef;
@@ -3805,19 +4083,19 @@ vardef byLabelsOnPolygon(text pointsList)(expr sty, shft)=
                         q3 := p2 shifted q5;
                         q6 = whatever[q0, q1] = whatever[q2, q3];
                     else:
-                        if (sty <> 1) or (stump <> 0):
+                        if (sty <> OMIT_LABELS_AT_STRAIGHT_ANGLES) or (stump <> 0):
                             q6 := p1 shifted q4;
                         else:
                             q6 := p1;
                         fi;
                     fi;
-                    if (sty = 2) and ((j = 0) or (j = i)):
+                    if ((sty = OMIT_FIRST_LABEL + OMIT_LAST_LABEL) or (sty = OMIT_FIRST_AND_LAST_LABEL)) and ((j = 0) or (j = i)):
                         pointDrawn.scantokens(pointName[j]) := true;
                     fi;
-                    if (sty = 3) and (j = 0):
+                    if (sty = OMIT_FIRST_LABEL) and (j = 0):
                         pointDrawn.scantokens(pointName[j]) := true;
                     fi;
-                    if (sty = 4) and (j = i):
+                    if (sty = OMIT_LAST_LABEL) and (j = i):
                         pointDrawn.scantokens(pointName[j]) := true;
                     fi;
                     if (q6 <> p1) and (not pointDrawn.scantokens(pointName[j])):

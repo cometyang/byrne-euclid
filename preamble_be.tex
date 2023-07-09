@@ -1,11 +1,13 @@
 % Figure placement it definitions is messy, below we define all the indentation, figure and lettrine placing stuff.
 \newdimen\LettrineSize
+\newcount\LettrineScale
 \newdimen\LettrinePadding
 \newdimen\PlateWidth
 \newdimen\PlateHeight
 \newdimen\pictureIndent
 \newdimen\PcH
 \LettrineSize=1.5cm
+\LettrineScale=300
 \LettrinePadding=2mm
 \PlateHeight=1.5cm
 \PlateWidth=7.6cm
@@ -202,9 +204,9 @@
 						lettrineFrame := reverse(fullsquare) scaled (\the\LettrineSize - 2pt);
 						fill lettrineBG withcolor black;
 						draw lettrineFrame withcolor white;
-						lettrineOutline := outlinetext("#1") scaled 3;
+						lettrineOutline := outlinetext("#1") scaled \the\LettrineScale/100;
 						lettrineOutline := lettrineOutline shifted -1/2[ulcorner(lettrineOutline), lrcorner(lettrineOutline)];
-						lettrinePicture := textext("#1") scaled 3;
+						lettrinePicture := textext("#1") scaled \the\LettrineScale/100;
 						lettrinePicture := lettrinePicture shifted -1/2[ulcorner(lettrinePicture), lrcorner(lettrinePicture)];
 						draw lettrinePicture withcolor white;
 						string pictureContents;
@@ -362,7 +364,7 @@
 \def\figureInMargin{\dosingleempty\figureinmargin}
 \def\figureinmargin[#1]#2{%
 	\iffirstargument%
-		\signalrightpage\inouter{~\doifrightpageelse{}{\hfill}\framed[frame=off,location=top]{#2}\doifrightpageelse{\hfill}{}~}%
+		\signalrightpage\inouter{~\doifrightpageelse{\hskip 0.5cm}{\hfill}\framed[frame=off,location=top]{#2}\doifrightpageelse{\hfill}{\hskip 0.5cm}~}%
 	\else%
 		\inouter{~\hfill\framed[frame=off,location=top]{#2}\hfill~}%
 	\fi%
@@ -418,14 +420,14 @@ after={\stopalignment\vskip 0.5\baselineskip}]
 \def\startproposition[#1][#2]{%
   \incrementcounter[proposition]%
   \startsilentsection[ownnumber={\directconvertedcounter{proposition}\empty},
-    incrementnumber=no,#1][#2]\setCurrentSection\preSectionCommand}
+    incrementnumber=no,#1][#2]\setCurrentSection}
     
 \define\startVerboseProposition{\dodoubleempty\startverboseproposition}
 \define\stopVerboseProposition{\postSectionCommand\stopsectiononlyname}
 \def\startverboseproposition[#1][#2]{%
   \incrementcounter[proposition]%
   \startsectiononlyname[ownnumber={\directconvertedcounter{proposition}\empty},
-    incrementnumber=no,#1][#2]\setCurrentSection\preSectionCommand}
+    incrementnumber=no,#1][#2]\setCurrentSection}
 
 \definecounter[propositionaz][way=bypart,numberconversion=Characters]
 \define\startPropositionAZ{\dodoubleempty\startpropositionaz}
@@ -433,7 +435,7 @@ after={\stopalignment\vskip 0.5\baselineskip}]
 \def\startpropositionaz[#1][#2]{%
   \incrementcounter[propositionaz]%
   \startsilentsection[ownnumber={\directconvertedcounter{propositionaz}\empty},
-    incrementnumber=no,#1][#2]\setCurrentSection\preSectionCommand}
+    incrementnumber=no,#1][#2]\setCurrentSection}
 
 \definecounter[definition][way=bypart]
 \define\startDefinition{\dodoubleempty\startdefinition}
